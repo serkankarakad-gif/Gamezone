@@ -38,9 +38,6 @@
       items: [
         { id: 'polis',      icon: '👮', label: 'Emniyet',         desc: 'GBT sorgulama, ceza, sabıka kaydı',  highlight: true },
         { id: 'askeriye',   icon: '🎖️', label: 'Askeriye',        desc: 'Askeri görevler, savunma bütçesi'                   },
-        { id: 'itfaiye',    icon: '🚒', label: 'İtfaiye',         desc: 'Yangın sigortası, acil müdahale'                    },
-        { id: 'sahilguz',   icon: '⚓', label: 'Sahil Güvenlik',  desc: 'İhracat denetimi, kaçakçılık önleme'                },
-        { id: 'jandarma',   icon: '🔫', label: 'Jandarma',        desc: 'Kırsal bölge güvenliği'                             },
       ]
     },
 
