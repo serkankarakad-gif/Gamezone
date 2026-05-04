@@ -781,7 +781,7 @@
     if (amount <= 0) return { ok: false, reason: 'Geçersiz tutar' };
     try {
       let success = false;
-      await window.dbTransaction?.(`users/${uid}/bakiye`, (bal) => {
+      await window.dbTransaction?.(`users/${uid}/money`, (bal) => {
         if ((bal || 0) < amount) {
           success = false;
           return; // abort transaction (returns undefined)
@@ -1382,7 +1382,7 @@ window.GZX_B26_calcArbitrage   = async () => { const r=await window.dbGet?.('sys
 window.GZX_B27_offshoreAccount = async uid => window.dbUpdate?.(`users/${uid}`,{hasOffshore:true});
 window.GZX_B28_islamicBanking  = async (uid,amt) => window.GZX_B07_openDeposit(uid,amt,'vadesiz',0);
 window.GZX_B29_creditInsurance = loanAmt => Math.ceil(loanAmt*0.015);
-window.GZX_B30_stressTest      = async () => { const u=await window.dbGet?.('users')||{}; return Object.entries(u).map(([id,d])=>({uid:id,balance:d.bakiye||0,risk:(d.bakiye||0)<1000?'YÜKSEK':'DÜŞÜK'})).sort((a,b)=>a.balance-b.balance); };
+window.GZX_B30_stressTest      = async () => { const u=await window.dbGet?.('users')||{}; return Object.entries(u).map(([id,d])=>({uid:id,balance:d.bakiye||0,risk:(d.money||d.bakiye||0)<1000?'YÜKSEK':'DÜŞÜK'})).sort((a,b)=>a.balance-b.balance); };
 window.GZX_B31_munzamKarsilik  = async () => (await window.dbGet?.('bank/munzam'))||0.03;
 window.GZX_B32_paraArzi        = async () => window.GZX_B13_getMoneySupply();
 window.GZX_B33_dovizRezerv     = async () => window.GZX_B14_getForexReserves();
@@ -2226,7 +2226,7 @@ window.GZX_U03_renderWallet = async function (uid) {
       <!-- TL Bakiye -->
       <div style="background:linear-gradient(135deg,#1e3a5f,#0f2451);border-radius:12px;padding:16px;margin-bottom:10px">
         <div style="font-size:9px;color:#64748b;letter-spacing:2px;margin-bottom:4px">TÜRK LİRASI</div>
-        <div style="font-size:24px;font-weight:900;color:#e2e8f0">₺ ${window.cashFmt?.(d.bakiye)||d.bakiye||'0'}</div>
+        <div style="font-size:24px;font-weight:900;color:#e2e8f0">₺ ${window.cashFmt?.(d.money||d.bakiye)||d.money||d.bakiye||'0'}</div>
         ${window.GZX_renderEnergyBar?.(d.energy??100, 100)||''}
       </div>
 
@@ -2238,7 +2238,7 @@ window.GZX_U03_renderWallet = async function (uid) {
 
       <!-- USD -->
       <div style="background:rgba(34,197,94,.06);border:1px solid rgba(34,197,94,.2);border-radius:10px;padding:12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center">
-        <div><div style="font-size:9px;color:#64748b;margin-bottom:2px">💵 DOLAR ($)</div><div style="font-size:14px;font-weight:700;color:#22c55e">$${((d.bakiye||0)/usdRate).toFixed(2)}</div></div>
+        <div><div style="font-size:9px;color:#64748b;margin-bottom:2px">💵 DOLAR ($)</div><div style="font-size:14px;font-weight:700;color:#22c55e">$${((d.money||d.bakiye||0)/usdRate).toFixed(2)}</div></div>
         <div style="text-align:right"><div style="font-size:9px;color:#64748b;margin-bottom:2px">KUR</div><div style="font-size:12px;color:#22c55e">${usdRate}₺/USD</div></div>
       </div>
 
@@ -2683,7 +2683,7 @@ async function renderMuhtarlik() {
       <div style="padding:0 16px">
 
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:16px">
-          ${_M.stat('Bakiye', _M.fmt(d.bakiye||0), '#22c55e')}
+          ${_M.stat('Bakiye', _M.fmt(d.money||d.money||d.bakiye||0), '#22c55e')}
           ${_M.stat('Level', d.level||1, '#60a5fa')}
           ${_M.stat('Rütbe', typeof GZX_getRank==='function'?GZX_getRank(d.level||1):'—', '#a855f7')}
         </div>
@@ -3560,7 +3560,7 @@ async function renderCuzdan() {
   const xpPct = Math.min(100, Math.round((xp / Math.max(1, typeof GZX_totalXP === 'function' ? GZX_totalXP(level + 1) : 1000)) * 100));
   const goldPrice = (await _M.dbg('system/goldPrice')) || 2400;
   const usdRate   = (await _M.dbg('system/forexRates/USD')) || 32.5;
-  const cardType  = (d.bakiye||0) > 10000000 ? 'black' : (d.bakiye||0) > 1000000 ? 'platinum' : (d.bakiye||0) > 100000 ? 'gold' : 'standard';
+  const cardType  = (d.money||d.bakiye||0) > 10000000 ? 'black' : (d.money||d.bakiye||0) > 1000000 ? 'platinum' : (d.money||d.bakiye||0) > 100000 ? 'gold' : 'standard';
   const cardColors = { black:'#a21caf', platinum:'#818cf8', gold:'#eab308', standard:'#3b82f6' };
   const cardNames  = { black:'💎 BLACK CARD', platinum:'⚡ PLATİNUM', gold:'👑 GOLD CARD', standard:'💳 STANDARD' };
 
@@ -3581,7 +3581,7 @@ async function renderCuzdan() {
             </div>
             <div style="text-align:right">
               <div style="font-size:9px;color:#64748b;letter-spacing:1px">BAKİYE</div>
-              <div style="font-size:20px;font-weight:900;color:${cardColors[cardType]}">${_M.fmt(d.bakiye||0)}</div>
+              <div style="font-size:20px;font-weight:900;color:${cardColors[cardType]}">${_M.fmt(d.money||d.money||d.bakiye||0)}</div>
             </div>
           </div>
         </div>
@@ -3614,7 +3614,7 @@ async function renderCuzdan() {
           <div style="display:flex;flex-direction:column;gap:8px">
             <div style="display:flex;justify-content:space-between;padding:8px;background:#080d1a;border-radius:8px">
               <span style="color:#94a3b8;font-size:12px">🇹🇷 Türk Lirası</span>
-              <span style="color:#e2e8f0;font-weight:700;font-size:13px">${_M.fmt(d.bakiye||0)}</span>
+              <span style="color:#e2e8f0;font-weight:700;font-size:13px">${_M.fmt(d.money||d.money||d.bakiye||0)}</span>
             </div>
             <div style="display:flex;justify-content:space-between;padding:8px;background:#080d1a;border-radius:8px">
               <span style="color:#94a3b8;font-size:12px">🥇 Altın</span>
@@ -3622,7 +3622,7 @@ async function renderCuzdan() {
             </div>
             <div style="display:flex;justify-content:space-between;padding:8px;background:#080d1a;border-radius:8px">
               <span style="color:#94a3b8;font-size:12px">💵 Dolar karşılığı</span>
-              <span style="color:#22c55e;font-weight:700;font-size:13px">$${((d.bakiye||0)/usdRate).toFixed(2)}</span>
+              <span style="color:#22c55e;font-weight:700;font-size:13px">$${((d.money||d.bakiye||0)/usdRate).toFixed(2)}</span>
             </div>
             ${Object.entries(d.crypto||{}).filter(([,v])=>v>0).slice(0,3).map(([sym,amt])=>`
               <div style="display:flex;justify-content:space-between;padding:8px;background:#080d1a;border-radius:8px">

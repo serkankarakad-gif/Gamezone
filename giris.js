@@ -387,6 +387,7 @@
       money: STARTING_MONEY,                  // 25.000 TL
       diamonds: STARTING_DIAMONDS,
       location: 'İstanbul',
+      province: 'İstanbul',   // il alanı (tüm sistem province okuyor)
       online: true,
       lastSeen: firebase.database.ServerValue.TIMESTAMP,
       createdAt: firebase.database.ServerValue.TIMESTAMP,

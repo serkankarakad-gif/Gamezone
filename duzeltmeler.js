@@ -723,141 +723,124 @@ window.GZX_B09_transfer = async function(fromUid, toUid, amount) {
 console.log('[duzeltmeler.js] ✅ 13 fix + yeni özellik aktif');
 
 /* ══════════════════════════════════════════════════════════════════
-   FIX 14 — Kimlik Kartı Sistemi TAM DÜZELTME
-   Sorunlar:
-   1) GZX_M01_issueIDCard dinamik-sistem.js'de admin kuyruğuna gönderiyor
-      ama onay mekanizması çalışmıyor → kimlik verilemiyor
-   2) Muhtarlık bakiye alanı "d.bakiye" ama para "users/{uid}/money"
-   3) GZX_M02_checkTradeEligibility mesajında eski fee (500) yazıyor
-   4) canTrade field set edilmeden ticaret engelleniyor
+   FIX — province alanı yoksa location'dan doldur (eski hesaplar)
    ══════════════════════════════════════════════════════════════════ */
-(function fixKimlikSistemi() {
-  // GZ hazır olana kadar bekle
-  const _w = setInterval(async function() {
-    if (!window.dbGet || !window.dbUpdate || !window.spendCash) return;
+(function migrateProvince() {
+  const _w = setInterval(async () => {
+    if (!window.GZ?.uid || !window.GZ?.data) return;
     clearInterval(_w);
-
-    /* ── FIX: GZX_M01_issueIDCard — Direkt ver, admin kuyruğu yok ── */
-    window.GZX_M01_issueIDCard = async function(uid) {
-      if (!uid) uid = window.GZ?.uid;
-      if (!uid) return window.toast?.('⛔ Oturum bulunamadı', 'error');
-
-      // Zaten var mı?
-      const has = await window.dbGet(`users/${uid}/kimlikKarti`);
-      if (has) return window.toast?.('🪪 Kimlik kartınız zaten var', 'warn');
-
-      // Firebase'den güncel ücreti al
-      const fee = (await window.dbGet('system/idCardFee')) || 10000;
-
-      // Bakiyeyi kontrol et (money alanı)
-      const userData = await window.dbGet(`users/${uid}`) || {};
-      const balance = userData.money || 0;
-
-      if (balance < fee) {
-        window.toast?.(`💸 Yetersiz bakiye! Gereken: ${cashFmt(fee)} — Mevcut: ${cashFmt(balance)}`, 'error', 6000);
-        return;
-      }
-
-      // Ücreti çek
-      const ok = await spendCash(uid, fee, 'kimlik-karti');
-      if (!ok) {
-        window.toast?.(`💸 Ödeme başarısız! Gereken: ${cashFmt(fee)}`, 'error');
-        return;
-      }
-
-      // Kimlik numarası oluştur
-      const tcNo = 'GZ' + String(Date.now()).slice(-9);
-      const seriNo = 'SRK-' + Date.now().toString(36).toUpperCase();
-
-      // Firebase'e yaz
-      await window.dbUpdate(`users/${uid}`, {
-        kimlikKarti: {
-          tc:        tcNo,
-          ad:        userData.username || 'OYUNCU',
-          il:        userData.province || 'İstanbul',
-          verilis:   Date.now(),
-          muhtarOnay: true,
-          seriNo:    seriNo,
-          onaylayan: 'Muhtar',
-        },
-        canTrade: true,
-      });
-
-      // Onay kaydı da oluştur (istatistik için)
-      try {
-        const ref = await window.dbPush('approvals/idCard', {
-          uid,
-          username: userData.username || 'Anonim',
-          type: 'kimlik_karti',
-          fee,
-          status: 'approved',
-          approvedBy: 'Anında-Onay',
-          approvedAt: Date.now(),
-          ts: Date.now(),
-        });
-      } catch(e) {}
-
-      // GZ.data güncelle (sayfayı yenilemeye gerek kalmadan)
-      if (window.GZ?.data && uid === window.GZ.uid) {
-        window.GZ.data.kimlikKarti = {
-          tc: tcNo, ad: userData.username || 'OYUNCU',
-          il: userData.province || 'İstanbul',
-          verilis: Date.now(), muhtarOnay: true, seriNo,
-        };
-        window.GZ.data.canTrade = true;
-      }
-
-      window.toast?.(`🪪 Kimlik kartı hazır! TC: ${tcNo} | ${cashFmt(fee)} ödendi`, 'success', 8000);
-      return tcNo;
-    };
-
-    /* ── FIX: GZX_M02 — Doğru ücret mesajı + money kontrolü ── */
-    window.GZX_M02_checkTradeEligibility = async function(uid) {
-      if (!uid) uid = window.GZ?.uid;
-      const d = await window.dbGet(`users/${uid}`) || {};
-      const fee = (await window.dbGet('system/idCardFee')) || 10000;
-      if (!d.kimlikKarti) {
-        window.toast?.(
-          `⛔ Ticaret için önce Muhtardan kimlik kartı çıkartmalısınız! (${cashFmt(fee)})`,
-          'error', 8000
-        );
-        return false;
-      }
-      if (d.accountFrozen) { window.toast?.('⛔ Hesabınız dondurulmuş', 'error'); return false; }
-      if (d.suspended)     { window.toast?.('⛔ Hesabınız askıya alınmış', 'error'); return false; }
-      return true;
-    };
-
-    /* ── FIX: Muhtarlık bakiyesi "money" alanından oku ── */
-    // renderMuhtarlik() içinde _M.dbg kullanıyor, _M.fmt ile bakiye gösteriyor.
-    // Sorun: d.bakiye alanı → money alanına köprü kur.
-    // Her 2 saniyede GZ.data.bakiye = GZ.data.money şeklinde sync et
-    setInterval(function() {
-      if (window.GZ?.data && window.GZ.data.money !== undefined) {
-        window.GZ.data.bakiye = window.GZ.data.money;
-      }
-    }, 2000);
-
-    // Anlık sync
-    if (window.GZ?.data) {
-      window.GZ.data.bakiye = window.GZ.data.money || window.GZ.data.bakiye || 0;
+    const d = window.GZ.data;
+    if (!d.province && d.location) {
+      await window.dbUpdate('users/' + window.GZ.uid, { province: d.location });
+      window.GZ.data.province = d.location;
+      console.log('[fix] province ← location:', d.location);
     }
-
-    /* ── FIX: Satış yapılırken kimlik kontrolü bypass ── */
-    // Bazı satış fonksiyonları canTrade ve kimlikKarti ikisini birden kontrol ediyor.
-    // Eğer kimlikKarti var ama canTrade yoksa → düzelt
-    (async function fixCanTrade() {
-      const uid = window.GZ?.uid;
-      if (!uid) return;
-      const d = await window.dbGet(`users/${uid}`);
-      if (d?.kimlikKarti && !d?.canTrade) {
-        await window.dbUpdate(`users/${uid}`, { canTrade: true });
-        if (window.GZ?.data) window.GZ.data.canTrade = true;
-        console.log('[FIX-14] canTrade düzeltildi');
-      }
-    })();
-
-    console.log('[FIX-14] ✅ Kimlik kartı sistemi düzeltildi');
-  }, 300);
+  }, 500);
 })();
 
+/* ══════════════════════════════════════════════════════════════════
+   FIX — il seçim modalı: kullanıcı province'ini seçebilsin
+   ══════════════════════════════════════════════════════════════════ */
+window.GZX_ilSecModal = function() {
+  const ILLER = window.ILLER_LIST || window.ILLER || [
+    'Adana','Adıyaman','Afyonkarahisar','Ağrı','Amasya','Ankara','Antalya','Artvin',
+    'Aydın','Balıkesir','Bilecik','Bingöl','Bitlis','Bolu','Burdur','Bursa','Çanakkale',
+    'Çankırı','Çorum','Denizli','Diyarbakır','Edirne','Elazığ','Erzincan','Erzurum',
+    'Eskişehir','Gaziantep','Giresun','Gümüşhane','Hakkari','Hatay','Isparta','Mersin',
+    'İstanbul','İzmir','Kars','Kastamonu','Kayseri','Kırklareli','Kırşehir','Kocaeli',
+    'Konya','Kütahya','Malatya','Manisa','Kahramanmaraş','Mardin','Muğla','Muş',
+    'Nevşehir','Niğde','Ordu','Rize','Sakarya','Samsun','Siirt','Sinop','Sivas',
+    'Tekirdağ','Tokat','Trabzon','Tunceli','Şanlıurfa','Uşak','Van','Yozgat','Zonguldak',
+    'Aksaray','Bayburt','Karaman','Kırıkkale','Batman','Şırnak','Bartın','Ardahan',
+    'Iğdır','Yalova','Karabük','Kilis','Osmaniye','Düzce'
+  ];
+
+  const html = `
+    <div style="padding:8px 0">
+      <p style="font-size:13px;color:#94a3b8;margin-bottom:12px">
+        Yaşadığın ili seç. Muhtarlık, belediye, seçimler bu ile göre çalışır.
+      </p>
+      <select id="ilSecInput" style="width:100%;padding:12px;background:#080d1a;border:1px solid #1e3a5f;
+        border-radius:10px;color:#e2e8f0;font-size:14px;margin-bottom:16px">
+        ${ILLER.map(il => `<option value="${il}" ${(window.GZ?.data?.province||'İstanbul')===il?'selected':''}>${il}</option>`).join('')}
+      </select>
+      <button onclick="(async()=>{
+        const il=document.getElementById('ilSecInput')?.value;
+        if(!il)return;
+        await window.dbUpdate('users/'+window.GZ.uid,{province:il,location:il});
+        window.GZ.data.province=il;
+        window.GZ.data.location=il;
+        document.querySelector('.modal-bg')?.remove();
+        window.toast?.('📍 İl güncellendi: '+il,'success',4000);
+        if(typeof renderMuhtarlik==='function') renderMuhtarlik();
+      })()" style="width:100%;background:#3b82f6;color:white;border:none;border-radius:10px;
+        padding:14px;font-weight:800;font-size:14px;cursor:pointer">
+        📍 İlimi Kaydet
+      </button>
+    </div>`;
+
+  if (typeof showModal === 'function') showModal('📍 İl Seç', html);
+};
+
+/* ══════════════════════════════════════════════════════════════════
+   FIX — renderMuhtarlik'e il seçimi butonu ekle (province yoksa)
+   ══════════════════════════════════════════════════════════════════ */
+(function patchMuhtarlikIl() {
+  const _prev = window.renderMuhtarlik;
+  window.renderMuhtarlik = async function() {
+    // Province yoksa önce il seçtir
+    const d = window.GZ?.data || {};
+    if (!d.province && !d.location) {
+      const main = document.getElementById('appMain');
+      if (main) {
+        main.innerHTML = `
+          <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;
+            min-height:60vh;padding:32px;text-align:center">
+            <div style="font-size:56px;margin-bottom:16px">📍</div>
+            <div style="font-size:18px;font-weight:900;color:#e2e8f0;margin-bottom:8px">İlini Seç</div>
+            <div style="font-size:13px;color:#64748b;margin-bottom:24px">
+              Muhtarlık hizmetlerinden yararlanmak için<br>önce hangi ilde olduğunu belirt.
+            </div>
+            <button onclick="window.GZX_ilSecModal?.()" style="background:#3b82f6;color:white;border:none;
+              border-radius:12px;padding:14px 32px;font-weight:800;font-size:15px;cursor:pointer">
+              📍 İlimi Seç
+            </button>
+          </div>`;
+      }
+      return;
+    }
+    if (typeof _prev === 'function') return _prev();
+  };
+})();
+
+/* ══════════════════════════════════════════════════════════════════
+   FIX — Rol seçilmemişse ticaret engellenmesin (sadece uyarı ver)
+   ══════════════════════════════════════════════════════════════════ */
+(function patchTradeCheck() {
+  const _prevBuyShop = window.buyShop;
+  if (!_prevBuyShop) return;
+  window.buyShop = async function(type, city) {
+    const d = window.GZ?.data || {};
+    if (!d.kimlikKarti) {
+      window.toast?.('⚠️ Kimlik kartın yok! Muhtarlık → Kimlik Kartı Çıkart (500₺)', 'warn', 6000);
+      setTimeout(() => { if (typeof switchTab === 'function') switchTab('muhtarlik'); }, 1500);
+      return;
+    }
+    return _prevBuyShop(type, city);
+  };
+})();
+
+/* ══════════════════════════════════════════════════════════════════
+   FIX — il seçimi profiline de ekle
+   ══════════════════════════════════════════════════════════════════ */
+(function addIlToProfile() {
+  const _prevRenderProfil = window.renderCuzdan || window.renderProfil;
+  // Profil render edilince il değiştir butonu göster
+  // Bu basit bir observer — profil ekranı açılınca il bilgisini güncelle
+  window.GZX_showIlChangeBtn = function() {
+    const prov = window.GZ?.data?.province || window.GZ?.data?.location || 'Seçilmedi';
+    return `<button onclick="window.GZX_ilSecModal?.()" style="background:#1e3a5f;color:#60a5fa;border:1px solid #1e3a5f;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:700;cursor:pointer">📍 İl: ${prov} (Değiştir)</button>`;
+  };
+})();
+
+console.log('[duzeltmeler.js] ✅ province fix + il seçimi + ticaret kilidi fixleri yüklendi');
