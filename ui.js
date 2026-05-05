@@ -221,7 +221,7 @@ var UI = (function () {
     if(!accs.length) return empty("📭 Hesap yok. 'Hesap Aç' sekmesine gidin.");
     return accs.map(function(a){
       return'<div class="card bank-account-card">'+
-        '<div class="bank-header"><span>'+(D.BANKS.find(function(b){return b.id===a.bankId;})||{}).emoji||"🏦"} ' + a.bankName+'</span>'+badge(a.type)+'</div>'+
+        '<div class="bank-header"><span>'+((D.BANKS.find(function(b){return b.id===a.bankId;})||{}).emoji||"🏦")+' ' + a.bankName+'</span>'+badge(a.type)+'</div>'+
         '<div class="iban-display">'+a.iban+'</div>'+
         '<div class="account-balance">'+GAME.fmt(a.balance)+'</div>'+
         '<div class="account-actions">'+
