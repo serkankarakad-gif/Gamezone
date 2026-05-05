@@ -1,97 +1,124 @@
 // ============================================================
-// TÜRK İMPARATORLUĞU — auth.js
-// Kayıt, Giriş, Şifre Sıfırlama, Güvenlik
+// TÜRK İMPARATORLUĞU — auth.js  (DÜZELTİLMİŞ)
+// Kayıt, Giriş, Şifre Sıfırlama
 // ============================================================
 "use strict";
 
 var AUTH = (function () {
 
-  var _attempts    = {};
-  var MAX_ATTEMPTS = 5;
-  var LOCK_MS      = 15 * 60 * 1000; // 15 dakika
-  var _screen      = "login";
+  var _attempts = {};
+  var MAX_TRIES = 5;
+  var LOCK_MS   = 15 * 60 * 1000;
+  var _screen   = "login";
 
-  // ——— Input temizle (XSS koruması) ———
+  // ——— XSS koruması ———
   function sanitize(str) {
     if (typeof str !== "string") return "";
     return str.trim().replace(/[<>"'`]/g, "").substring(0, 500);
   }
 
-  // ——— E-posta doğrula ———
+  // ——— E-posta kontrolü ———
   function validEmail(email) {
     return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email) && email.length <= 254;
   }
 
-  // ——— Şifre gücü kontrolü ———
+  // ——— Şifre gücü ———
   function validPass(p) {
-    if (p.length < 8)          return "Şifre en az 8 karakter olmalı.";
-    if (!/[A-Z]/.test(p))      return "En az 1 büyük harf gerekli.";
-    if (!/[a-z]/.test(p))      return "En az 1 küçük harf gerekli.";
-    if (!/[0-9]/.test(p))      return "En az 1 rakam gerekli.";
-    return null; // OK
+    if (!p || p.length < 8)  return "Şifre en az 8 karakter olmalı.";
+    if (!/[A-Z]/.test(p))    return "En az 1 büyük harf gerekli. (A-Z)";
+    if (!/[a-z]/.test(p))    return "En az 1 küçük harf gerekli. (a-z)";
+    if (!/[0-9]/.test(p))    return "En az 1 rakam gerekli. (0-9)";
+    return null;
   }
 
-  // ——— Brute-force koruması ———
-  function checkLock(email) {
+  // ——— Brute-force ———
+  function _isLocked(email) {
     var k = email.toLowerCase();
     if (!_attempts[k]) return false;
-    if (Date.now() < _attempts[k].lockUntil) {
-      var rem = Math.ceil((_attempts[k].lockUntil - Date.now()) / 60000);
-      UI.toast("Çok fazla deneme. " + rem + " dakika bekleyin.", "error");
+    if (Date.now() < _attempts[k].until) {
+      var rem = Math.ceil((_attempts[k].until - Date.now()) / 60000);
+      _toast("Çok fazla deneme. " + rem + " dakika bekleyin.", "error");
       return true;
     }
+    delete _attempts[k];
     return false;
   }
 
-  function recordFail(email) {
+  function _recordFail(email) {
     var k = email.toLowerCase();
-    if (!_attempts[k]) _attempts[k] = { count: 0, lockUntil: 0 };
+    if (!_attempts[k]) _attempts[k] = { count: 0, until: 0 };
     _attempts[k].count++;
-    if (_attempts[k].count >= MAX_ATTEMPTS) {
-      _attempts[k].lockUntil = Date.now() + LOCK_MS;
+    if (_attempts[k].count >= MAX_TRIES) {
+      _attempts[k].until = Date.now() + LOCK_MS;
       _attempts[k].count = 0;
+      _toast("5 başarısız deneme — 15 dakika kilitlendi.", "error");
     }
   }
 
-  function clearFail(email) { delete _attempts[email.toLowerCase()]; }
-
-  // ——— Firebase hata mesajları ———
-  function errMsg(code) {
-    var m = {
-      "auth/user-not-found":        "Bu e-posta ile kayıtlı kullanıcı bulunamadı.",
-      "auth/wrong-password":        "E-posta veya şifre hatalı.",
-      "auth/email-already-in-use":  "Bu e-posta zaten kayıtlı.",
-      "auth/weak-password":         "Şifre çok zayıf.",
-      "auth/invalid-email":         "Geçersiz e-posta adresi.",
-      "auth/too-many-requests":     "Çok fazla deneme. Bir süre bekleyin.",
-      "auth/network-request-failed":"İnternet bağlantısı yok.",
-      "auth/user-disabled":         "Hesap devre dışı bırakıldı.",
-      "auth/invalid-credential":    "E-posta veya şifre hatalı."
-    };
-    return m[code] || "Beklenmeyen bir hata oluştu. Tekrar deneyin.";
+  // ——— Güvenli toast (UI henüz yüklenmemiş olabilir) ———
+  function _toast(msg, type) {
+    if (typeof UI !== "undefined" && UI.toast) {
+      UI.toast(msg, type);
+    } else {
+      alert(msg);
+    }
   }
 
-  // ——— Başlangıç durumu ———
-  function buildState(name, email, uid) {
+  // ——— Firebase Auth hazır mı? ———
+  function _authReady() {
+    if (!window.fbAuth) {
+      _toast("Sunucu bağlantısı henüz hazır değil. 2 saniye bekleyip tekrar deneyin.", "error");
+      return false;
+    }
+    return true;
+  }
+
+  // ——— Firebase hata mesajları ———
+  function _errMsg(code) {
+    var msgs = {
+      "auth/user-not-found":         "Bu e-posta ile kayıtlı kullanıcı bulunamadı.",
+      "auth/wrong-password":         "E-posta veya şifre hatalı.",
+      "auth/invalid-credential":     "E-posta veya şifre hatalı.",
+      "auth/email-already-in-use":   "Bu e-posta zaten kayıtlı. Giriş yapmayı deneyin.",
+      "auth/weak-password":          "Şifre çok zayıf. En az 8 karakter, büyük/küçük harf ve rakam kullanın.",
+      "auth/invalid-email":          "Geçersiz e-posta adresi formatı.",
+      "auth/too-many-requests":      "Çok fazla başarısız deneme. Bir süre bekleyin.",
+      "auth/network-request-failed": "İnternet bağlantısı yok veya zayıf.",
+      "auth/user-disabled":          "Bu hesap devre dışı bırakılmış.",
+      "auth/operation-not-allowed":  "E-posta/şifre girişi aktif değil. Firebase Console'dan aktif edin.",
+      "auth/popup-closed-by-user":   "İşlem iptal edildi.",
+      "auth/requires-recent-login":  "Güvenlik için tekrar giriş yapmanız gerekiyor."
+    };
+    return msgs[code] || "Hata: " + (code || "Bilinmeyen") + " — Tekrar deneyin.";
+  }
+
+  // ——— Yeni oyuncu başlangıç verisi ———
+  function _buildState(name, email, uid) {
     var now = new Date().toISOString();
     return {
       profile: {
-        uid: uid, name: name, email: email,
-        level: 1, xp: 0, elmas: D.CONFIG.INITIAL_ELMAS,
-        avatar: "👤", badge: "Çırak 📜",
+        uid:         uid,
+        name:        name,
+        email:       email,
+        level:       1,
+        xp:          0,
+        elmas:       D.CONFIG.INITIAL_ELMAS,
+        avatar:      "👤",
+        badge:       "Çırak 📜",
         creditScore: D.CONFIG.CREDIT_SCORE_INIT,
-        party: null, sgkStatus: null,
-        createdAt: now
+        party:       null,
+        sgkStatus:   null,
+        createdAt:   now
       },
       wallet: {
-        tl: D.CONFIG.INITIAL_TL,
+        tl:            D.CONFIG.INITIAL_TL,
         digitalWallet: { provider: null, balance: 0 }
       },
-      bank: { accounts: [], loans: [], deposits: [], checks: [] },
-      stocks: { portfolio: {}, watchlist: [] },
-      crypto: { portfolio: {} },
+      bank:       { accounts: [], loans: [], deposits: [], checks: [] },
+      stocks:     { portfolio: {}, watchlist: [] },
+      crypto:     { portfolio: {} },
       production: { gardens: [], farms: [], factories: [], mines: [], energy: [] },
-      commerce: { shops: [] },
+      commerce:   { shops: [] },
       properties: { realEstate: [], insurance: [], mortgages: [] },
       government: {
         residence: null, municipality: null,
@@ -105,111 +132,195 @@ var AUTH = (function () {
     };
   }
 
-  // ——— Public API ———
-  return {
+  // ——— Ekranı göster ———
+  function show(screen) {
+    ["login-screen", "reg-screen", "forgot-screen"].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.classList.add("hidden");
+    });
+    var target = document.getElementById(screen + "-screen");
+    if (target) target.classList.remove("hidden");
 
-    currentScreen: function () { return _screen; },
+    // Tab buton aktifliği
+    var tabs = document.querySelectorAll(".auth-tabs button");
+    tabs.forEach(function (btn) { btn.classList.remove("active"); });
+    if (screen === "login")  tabs[0] && tabs[0].classList.add("active");
+    if (screen === "reg")    tabs[1] && tabs[1].classList.add("active");
 
-    sanitize: sanitize,
+    _screen = screen;
+  }
 
-    show: function (screen) {
-      ["login-screen", "reg-screen", "forgot-screen"].forEach(function (id) {
-        var el = document.getElementById(id);
-        if (el) el.classList.add("hidden");
+  // ——— GİRİŞ ———
+  function login() {
+    if (!_authReady()) return;
+
+    var emailEl = document.getElementById("login-email");
+    var passEl  = document.getElementById("login-pass");
+    if (!emailEl || !passEl) return _toast("Sayfa yüklenemedi, yenileyin.", "error");
+
+    var email = sanitize(emailEl.value).toLowerCase();
+    var pass  = passEl.value;
+
+    if (!validEmail(email)) return _toast("Geçerli bir e-posta girin. Örnek: ali@gmail.com", "error");
+    if (!pass)              return _toast("Şifrenizi girin.", "error");
+    if (_isLocked(email))   return;
+
+    _setBtn("login-btn", true, "Giriş yapılıyor...");
+
+    window.fbAuth.signInWithEmailAndPassword(email, pass)
+      .then(function () {
+        delete _attempts[email];
+        // onAuthStateChanged game.js'de handle ediyor
+      })
+      .catch(function (err) {
+        _recordFail(email);
+        _toast(_errMsg(err.code), "error");
+      })
+      .finally(function () {
+        _setBtn("login-btn", false, "Giriş Yap");
       });
-      var t = document.getElementById(screen + "-screen");
-      if (t) t.classList.remove("hidden");
-      _screen = screen;
-    },
+  }
 
-    register: function () {
-      var name  = sanitize(document.getElementById("reg-name").value);
-      var email = sanitize(document.getElementById("reg-email").value).toLowerCase();
-      var pass  = document.getElementById("reg-pass").value;
-      var pass2 = document.getElementById("reg-pass2").value;
-      var terms = document.getElementById("reg-terms").checked;
+  // ——— KAYIT ———
+  function register() {
+    if (!_authReady()) return;
 
-      if (!name || name.length < 2)    return UI.toast("Geçerli bir ad girin.", "error");
-      if (!validEmail(email))           return UI.toast("Geçersiz e-posta.", "error");
-      var pe = validPass(pass);
-      if (pe)                           return UI.toast(pe, "error");
-      if (pass !== pass2)               return UI.toast("Şifreler eşleşmiyor.", "error");
-      if (!terms)                       return UI.toast("Kullanım koşullarını kabul edin.", "error");
+    var nameEl  = document.getElementById("reg-name");
+    var emailEl = document.getElementById("reg-email");
+    var passEl  = document.getElementById("reg-pass");
+    var pass2El = document.getElementById("reg-pass2");
+    var termsEl = document.getElementById("reg-terms");
 
-      UI.setLoading("reg-btn", true);
-      window.fbAuth.createUserWithEmailAndPassword(email, pass)
-        .then(function (cred) {
-          return cred.user.updateProfile({ displayName: name })
-            .then(function () { return cred.user.sendEmailVerification(); })
-            .then(function () {
-              var state = buildState(name, email, cred.user.uid);
-              return DB.saveUser(cred.user.uid, state);
-            })
-            .then(function () {
-              UI.toast("Hoş geldiniz, " + name + "! E-posta doğrulama linki gönderildi.", "success");
-              clearFail(email);
-            });
-        })
-        .catch(function (err) { UI.toast(errMsg(err.code), "error"); })
-        .finally(function () { UI.setLoading("reg-btn", false); });
-    },
+    if (!nameEl || !emailEl || !passEl || !pass2El || !termsEl)
+      return _toast("Form yüklenemedi. Sayfayı yenileyin.", "error");
 
-    login: function () {
-      var email = sanitize(document.getElementById("login-email").value).toLowerCase();
-      var pass  = document.getElementById("login-pass").value;
-      if (!validEmail(email)) return UI.toast("Geçersiz e-posta.", "error");
-      if (!pass)              return UI.toast("Şifre giriniz.", "error");
-      if (checkLock(email))   return;
+    var name  = sanitize(nameEl.value);
+    var email = sanitize(emailEl.value).toLowerCase();
+    var pass  = passEl.value;
+    var pass2 = pass2El.value;
+    var terms = termsEl.checked;
 
-      UI.setLoading("login-btn", true);
-      window.fbAuth.signInWithEmailAndPassword(email, pass)
-        .then(function () { clearFail(email); })
-        .catch(function (err) { recordFail(email); UI.toast(errMsg(err.code), "error"); })
-        .finally(function () { UI.setLoading("login-btn", false); });
-    },
+    if (!name || name.length < 2)   return _toast("Ad Soyad en az 2 karakter olmalı.", "error");
+    if (!validEmail(email))          return _toast("Geçerli bir e-posta girin. Örnek: ali@gmail.com", "error");
+    var passErr = validPass(pass);
+    if (passErr)                     return _toast(passErr, "error");
+    if (pass !== pass2)              return _toast("Şifreler eşleşmiyor.", "error");
+    if (!terms)                      return _toast("Kullanım koşullarını kabul etmelisiniz.", "error");
 
-    forgotPassword: function () {
-      var email = sanitize(document.getElementById("forgot-email").value).toLowerCase();
-      if (!validEmail(email)) return UI.toast("Geçerli e-posta giriniz.", "error");
-      UI.setLoading("forgot-btn", true);
-      window.fbAuth.sendPasswordResetEmail(email, { url: window.location.href })
-        .then(function () {
-          UI.toast("Sıfırlama linki gönderildi (kayıtlıysa).", "success");
-          setTimeout(function () { AUTH.show("login"); }, 3000);
-        })
-        .catch(function () { UI.toast("Sıfırlama linki gönderildi (kayıtlıysa).", "success"); })
-        .finally(function () { UI.setLoading("forgot-btn", false); });
-    },
+    _setBtn("reg-btn", true, "Kayıt olunuyor...");
 
-    logout: function () {
-      window.fbAuth.signOut()
-        .then(function () {
-          GAME.destroy();
-          document.getElementById("app").classList.add("hidden");
-          document.getElementById("auth-screen").classList.remove("hidden");
-          AUTH.show("login");
-          UI.toast("Başarıyla çıkış yapıldı.", "info");
-        })
-        .catch(function () { UI.toast("Çıkış yapılamadı.", "error"); });
-    },
+    window.fbAuth.createUserWithEmailAndPassword(email, pass)
+      .then(function (cred) {
+        var uid   = cred.user.uid;
+        var state = _buildState(name, email, uid);
+        return cred.user.updateProfile({ displayName: name })
+          .then(function () { return DB.saveUser(uid, state); })
+          .then(function () {
+            // E-posta doğrulama — hata verirse oyunu engelleme
+            cred.user.sendEmailVerification().catch(function () {});
+            _toast("🎉 Hoş geldiniz, " + name + "! 50.000 TL ile başlıyorsunuz!", "success");
+          });
+      })
+      .catch(function (err) {
+        _toast(_errMsg(err.code), "error");
+      })
+      .finally(function () {
+        _setBtn("reg-btn", false, "Kayıt Ol — 50.000 TL başla!");
+      });
+  }
 
-    changePassword: function () {
-      var oldPass  = document.getElementById("cp-old").value;
-      var newPass  = document.getElementById("cp-new").value;
-      var newPass2 = document.getElementById("cp-new2").value;
-      var pe = validPass(newPass);
-      if (pe)                    return UI.toast(pe, "error");
-      if (newPass !== newPass2)  return UI.toast("Yeni şifreler eşleşmiyor.", "error");
-      var user = window.fbAuth.currentUser;
-      if (!user)                 return;
-      var cred = firebase.auth.EmailAuthProvider.credential(user.email, oldPass);
-      user.reauthenticateWithCredential(cred)
-        .then(function () { return user.updatePassword(newPass); })
-        .then(function () { UI.toast("Şifre başarıyla değiştirildi.", "success"); UI.closeModal(); })
-        .catch(function (err) {
-          if (err.code === "auth/wrong-password") UI.toast("Mevcut şifreniz yanlış.", "error");
-          else UI.toast("Şifre değiştirilemedi.", "error");
-        });
-    }
+  // ——— ŞİFRE SIFIRLA ———
+  function forgotPassword() {
+    if (!_authReady()) return;
+
+    var emailEl = document.getElementById("forgot-email");
+    if (!emailEl) return _toast("Form yüklenemedi.", "error");
+
+    var email = sanitize(emailEl.value).toLowerCase();
+    if (!validEmail(email)) return _toast("Geçerli bir e-posta girin.", "error");
+
+    _setBtn("forgot-btn", true, "Gönderiliyor...");
+
+    window.fbAuth.sendPasswordResetEmail(email, { url: window.location.href })
+      .then(function () {
+        _toast("✅ Sıfırlama linki gönderildi! Spam klasörünü de kontrol edin.", "success");
+        setTimeout(function () { show("login"); }, 3000);
+      })
+      .catch(function (err) {
+        // Güvenlik: kullanıcı var mı yok mu belli etme
+        _toast("Eğer bu e-posta kayıtlıysa sıfırlama linki gönderildi.", "success");
+        setTimeout(function () { show("login"); }, 3000);
+      })
+      .finally(function () {
+        _setBtn("forgot-btn", false, "Sıfırlama Linki Gönder");
+      });
+  }
+
+  // ——— ÇIKIŞ ———
+  function logout() {
+    if (!window.fbAuth) { location.reload(); return; }
+    window.fbAuth.signOut()
+      .then(function () {
+        if (typeof GAME !== "undefined" && GAME.destroy) GAME.destroy();
+        var app  = document.getElementById("app");
+        var auth = document.getElementById("auth-screen");
+        if (app)  app.classList.add("hidden");
+        if (auth) auth.classList.remove("hidden");
+        show("login");
+        _toast("Başarıyla çıkış yapıldı.", "info");
+      })
+      .catch(function () { location.reload(); });
+  }
+
+  // ——— ŞİFRE DEĞİŞTİR ———
+  function changePassword() {
+    var oldEl  = document.getElementById("cp-old");
+    var newEl  = document.getElementById("cp-new");
+    var new2El = document.getElementById("cp-new2");
+    if (!oldEl || !newEl || !new2El) return;
+
+    var oldPass = oldEl.value;
+    var newPass = newEl.value;
+    var newPass2 = new2El.value;
+
+    var pe = validPass(newPass);
+    if (pe)                 return _toast(pe, "error");
+    if (newPass !== newPass2) return _toast("Yeni şifreler eşleşmiyor.", "error");
+
+    var user = window.fbAuth && window.fbAuth.currentUser;
+    if (!user) return _toast("Giriş yapmalısınız.", "error");
+
+    var cred = firebase.auth.EmailAuthProvider.credential(user.email, oldPass);
+    user.reauthenticateWithCredential(cred)
+      .then(function () { return user.updatePassword(newPass); })
+      .then(function () {
+        _toast("✅ Şifre başarıyla değiştirildi.", "success");
+        if (typeof UI !== "undefined") UI.closeModal();
+      })
+      .catch(function (err) {
+        if (err.code === "auth/wrong-password" || err.code === "auth/invalid-credential")
+          _toast("Mevcut şifreniz yanlış.", "error");
+        else
+          _toast(_errMsg(err.code), "error");
+      });
+  }
+
+  // ——— Buton loading state ———
+  function _setBtn(id, loading, text) {
+    var btn = document.getElementById(id);
+    if (!btn) return;
+    btn.disabled    = loading;
+    btn.textContent = loading ? "⏳ " + text : text;
+  }
+
+  return {
+    show:           show,
+    login:          login,
+    register:       register,
+    forgotPassword: forgotPassword,
+    logout:         logout,
+    changePassword: changePassword,
+    sanitize:       sanitize,
+    currentScreen:  function () { return _screen; }
   };
 })();
