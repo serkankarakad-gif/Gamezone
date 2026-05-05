@@ -1,6 +1,6 @@
 // ============================================================
 // TÜRK İMPARATORLUĞU — firebase.js
-// Firebase başlatma + Güvenli DB yardımcıları
+// Firebase Realtime Database kullanılıyor (Firestore değil)
 // ============================================================
 "use strict";
 
@@ -17,7 +17,7 @@ const FIREBASE_CONFIG = {
 
 window.fbApp  = null;
 window.fbAuth = null;
-window.fbDB   = null;
+window.fbDB   = null; // Realtime Database
 
 function initFirebase() {
   try {
@@ -25,12 +25,8 @@ function initFirebase() {
       ? firebase.apps[0]
       : firebase.initializeApp(FIREBASE_CONFIG);
     window.fbAuth = firebase.auth();
-    window.fbDB   = firebase.firestore();
-
-    // Offline önbellek (opsiyonel, hata verirse devam et)
-    window.fbDB.enablePersistence({ synchronizeTabs: false }).catch(function() {});
-
-    console.log("✅ Firebase hazır.");
+    window.fbDB   = firebase.database(); // ← Realtime Database
+    console.log("✅ Firebase (Realtime DB) hazır.");
   } catch (err) {
     console.error("Firebase init hatası:", err);
     alert("Sunucu bağlantısı kurulamadı. Sayfayı yenileyin.");
@@ -38,150 +34,105 @@ function initFirebase() {
 }
 
 // ════════════════════════════════════════════════════════════
-// FİRESTORE GÜVENLİK KURALLARI
-// Firebase Console → Firestore → Rules → yapıştır → Publish
+// REALTİME DATABASE KURALLARI
+// Firebase Console → Realtime Database → Rules → yapıştır
 // ════════════════════════════════════════════════════════════
 /*
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-
-    match /security_log/{doc} {
-      allow read:  if false;
-      allow write: if request.auth != null;
-    }
-
-    match /users/{userId} {
-      allow read: if request.auth != null && request.auth.uid == userId;
-      allow write: if request.auth != null && request.auth.uid == userId;
-
-      match /transactions/{txId} {
-        allow read:   if request.auth != null && request.auth.uid == userId;
-        allow create: if request.auth != null && request.auth.uid == userId;
-        allow update, delete: if false;
+{
+  "rules": {
+    "users": {
+      "$uid": {
+        ".read":  "$uid === auth.uid",
+        ".write": "$uid === auth.uid"
       }
-    }
-
-    match /marketplace/{id} {
-      allow read:   if request.auth != null;
-      allow create: if request.auth != null
-                    && request.resource.data.sellerId == request.auth.uid;
-      allow update, delete: if request.auth != null
-                    && resource.data.sellerId == request.auth.uid;
+    },
+    "leaderboard": {
+      ".read":  "auth != null",
+      ".write": "auth != null"
+    },
+    "announcements": {
+      ".read":  "auth != null",
+      ".write": "auth.uid === 'IEqctPKFy6bL5u9ew6kIm8W6CsF2'"
+    },
+    "promo_codes": {
+      ".read":  "auth != null",
+      ".write": "auth.uid === 'IEqctPKFy6bL5u9ew6kIm8W6CsF2'"
     }
   }
 }
 */
 
 // ════════════════════════════════════════════════════════════
-// DB Yardımcıları
+// DB Yardımcıları — Realtime Database
 // ════════════════════════════════════════════════════════════
 var DB = {
 
   // Kullanıcı verisini getir
-  async getUser(uid) {
-    try {
-      var snap = await window.fbDB.collection("users").doc(uid).get();
-      return snap.exists ? snap.data() : null;
-    } catch (e) {
-      console.error("DB.getUser hatası:", e.code, e.message);
-      return null;
-    }
-  },
-
-  // Kullanıcı verisini kaydet — ASLA kullanıcıyı atmaz
-  async saveUser(uid, data) {
-    // Rate limit — 4 saniyede bir max 1 kayıt
-    if (typeof SEC !== "undefined" && !SEC.canSave()) return true;
-
-    try {
-      await window.fbDB.collection("users").doc(uid).set(
-        Object.assign({}, data, {
-          _updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-        }),
-        { merge: true }
-      );
-      return true;
-    } catch (e) {
-      console.error("DB.saveUser hatası:", e.code, e.message);
-      // Hata olursa sadece logla, kullanıcıya dokunma
-      return false;
-    }
-  },
-
-  // İşlem geçmişi ekle
-  async logTransaction(uid, tx) {
-    try {
-      await window.fbDB.collection("users").doc(uid)
-        .collection("transactions").add(
-          Object.assign({}, tx, {
-            _ts: firebase.firestore.FieldValue.serverTimestamp()
-          })
-        );
-    } catch (e) {
-      console.error("DB.logTransaction:", e.code);
-    }
-  },
-
-  // İşlem geçmişini getir
-  async getTransactions(uid, lim) {
-    try {
-      var snap = await window.fbDB.collection("users").doc(uid)
-        .collection("transactions")
-        .orderBy("_ts", "desc")
-        .limit(lim || 30)
-        .get();
-      return snap.docs.map(function(d) {
-        return Object.assign({ id: d.id }, d.data());
+  getUser: function(uid) {
+    return window.fbDB.ref("users/" + uid).once("value")
+      .then(function(snap) {
+        return snap.exists() ? snap.val() : null;
+      })
+      .catch(function(e) {
+        console.error("DB.getUser hatası:", e.code, e.message);
+        return null;
       });
-    } catch (e) {
-      console.error("DB.getTransactions:", e.code);
-      return [];
-    }
   },
 
-  // Güvenlik olayı logla
-  async logSecurityEvent(uid, reason) {
-    try {
-      await window.fbDB.collection("security_log").add({
-        uid:    uid,
-        reason: reason,
-        ua:     navigator.userAgent,
-        ts:     firebase.firestore.FieldValue.serverTimestamp()
+  // Kullanıcı verisini kaydet
+  saveUser: function(uid, data) {
+    // Rate limit — çok sık kaydetme
+    if (typeof SEC !== "undefined" && !SEC.canSave()) return Promise.resolve(true);
+
+    // Firestore özel alanlarını temizle
+    var clean = JSON.parse(JSON.stringify(data));
+    clean._savedAt = Date.now();
+
+    return window.fbDB.ref("users/" + uid).set(clean)
+      .then(function() { return true; })
+      .catch(function(e) {
+        console.error("DB.saveUser hatası:", e.code, e.message);
+        return false;
       });
-    } catch (e) { /* sessiz */ }
   },
 
-  // Oyuncu pazarına ilan ekle
-  async addListing(data) {
-    try {
-      var ref = await window.fbDB.collection("marketplace").add(
-        Object.assign({}, data, {
-          _createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-          active: true
-        })
-      );
-      return ref.id;
-    } catch (e) {
-      console.error("DB.addListing:", e.message);
-      return null;
-    }
+  // İşlem logu
+  logTransaction: function(uid, tx) {
+    tx._ts = Date.now();
+    return window.fbDB.ref("users/" + uid + "/transactions").push(tx)
+      .catch(function(e) { console.error("DB.logTransaction:", e.code); });
   },
 
-  // Aktif ilanları getir
-  async getListings(lim) {
-    try {
-      var snap = await window.fbDB.collection("marketplace")
-        .where("active", "==", true)
-        .orderBy("_createdAt", "desc")
-        .limit(lim || 50)
-        .get();
-      return snap.docs.map(function(d) {
-        return Object.assign({ id: d.id }, d.data());
-      });
-    } catch (e) {
-      console.error("DB.getListings:", e.code);
-      return [];
-    }
+  // Güvenlik log
+  logSecurityEvent: function(uid, reason) {
+    return window.fbDB.ref("security_log").push({
+      uid: uid, reason: reason,
+      ua: navigator.userAgent, ts: Date.now()
+    }).catch(function() {});
+  },
+
+  // Liderlik tablosu için veri yaz
+  updateLeaderboard: function(uid, name, tl, level) {
+    return window.fbDB.ref("leaderboard/" + uid).set({
+      name: name, tl: tl, level: level, ts: Date.now()
+    }).catch(function() {});
+  },
+
+  // Liderlik tablosunu getir
+  getLeaderboard: function() {
+    return window.fbDB.ref("leaderboard").orderByChild("tl").limitToLast(50).once("value")
+      .then(function(snap) {
+        var list = [];
+        snap.forEach(function(child) { list.unshift(Object.assign({ uid: child.key }, child.val())); });
+        return list;
+      })
+      .catch(function() { return []; });
+  },
+
+  // Duyuru getir
+  getAnnouncement: function() {
+    return window.fbDB.ref("announcements/current").once("value")
+      .then(function(snap) { return snap.val(); })
+      .catch(function() { return null; });
   }
 };
